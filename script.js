@@ -1,9 +1,11 @@
 // โหลดแผนที่ Leaflet โดยใช้รูปภาพ
-const map = L.map('map', {
+const map = L.map('map', { 
   crs: L.CRS.Simple,
   minZoom: -2,
-  maxZoom: 4
+  maxZoom: 4,
+  preferCanvas: true // ใช้ canvas renderer
 });
+
 
 // โหลดภาพแผนที่ (แก้ path ตามไฟล์จริง)
 const w = 4000;
@@ -39,47 +41,68 @@ style.innerHTML = `
 `;
 document.head.appendChild(style);
 
+// ฟังก์ชันช่วยแปลงวินาทีเป็น mm:ss
+function formatTime(totalSeconds) {
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
 // เก็บ marker + timer
 let markers = [];
 
-// เมื่อคลิกบนแผนที่
 map.on('click', function(e) {
-  Swal.fire({
-    title: 'ตั้งเวลา (วินาที)',
-    input: 'number',
-    inputAttributes: { min: 1 },
-    showCancelButton: true,
-    confirmButtonText: 'เริ่มนับถอยหลัง'
-  }).then((timeResult) => {
-    if (!timeResult.isConfirmed) return;
+    // สร้าง Leaflet popup เล็ก ๆ
+    const popup = L.popup()
+        .setLatLng(e.latlng)
+        .setContent(`
+            <div style="display:flex; flex-direction:column; gap:4px;">
+                <label>ตั้งเวลา (นาที):</label>
+                <input type="number" min="1" id="timeInput" style="width:60px;" />
+                <button id="startBtn">เริ่มนับถอยหลัง</button>
+            </div>
+        `)
+        .openOn(map);
 
-    let seconds = parseInt(timeResult.value);
-    if (isNaN(seconds) || seconds <= 0) return;
+    // รอให้ DOM ของ popup โหลดก่อน
+    setTimeout(() => {
+        const startBtn = document.getElementById('startBtn');
+        const timeInput = document.getElementById('timeInput');
 
-    // สร้าง marker + tooltip (แสดงตลอด)
-    const marker = L.marker(e.latlng, { icon: normalIcon }).addTo(map);
-    marker.bindTooltip(`⏳ ${seconds}s`, { permanent: true, direction: "top", offset: [0, -30] }).openTooltip();
+        startBtn.addEventListener('click', () => {
+            let minutes = parseInt(timeInput.value);
+            if (isNaN(minutes) || minutes <= 0) return;
 
-    // countdown
-    let timer = setInterval(() => {
-      seconds--;
-      if (seconds > 0) {
-        marker.setTooltipContent(`⏳ ${seconds}s`);
-      } else {
-        clearInterval(timer);
-        marker.setTooltipContent("✅ หมดเวลาแล้ว!");
-        marker.setIcon(redIcon);
-      }
-    }, 1000);
+            let totalSeconds = minutes * 60;
 
-    // เก็บ marker + timer ไว้
-    markers.push({ marker, timer });
+            // สร้าง marker + tooltip
+            const marker = L.marker(e.latlng, { icon: normalIcon }).addTo(map);
+            marker.bindTooltip(`⏳ ${formatTime(totalSeconds)}`, { permanent: true, direction: "top", offset: [0, -30] }).openTooltip();
 
-    // คลิกขวาลบ marker
-    marker.on("contextmenu", function() {
-      clearInterval(timer);
-      map.removeLayer(marker);
-      markers = markers.filter(m => m.marker !== marker);
-    });
-  });
+            // countdown
+            let countdown = setInterval(() => {
+                totalSeconds--;
+                if (totalSeconds > 0) {
+                    marker.setTooltipContent(`⏳ ${formatTime(totalSeconds)}`);
+                } else {
+                    clearInterval(countdown);
+                    marker.setTooltipContent("✅ หมดเวลาแล้ว!");
+                    marker.setIcon(redIcon);
+                }
+            }, 1000);
+
+            // เก็บ marker + timer
+            markers.push({ marker, timer: countdown });
+
+            // คลิกขวาลบ marker
+            marker.on("contextmenu", function() {
+                clearInterval(countdown);
+                map.removeLayer(marker);
+                markers = markers.filter(m => m.marker !== marker);
+            });
+
+            // ปิด popup หลังกด start
+            map.closePopup();
+        });
+    }, 50);
 });
