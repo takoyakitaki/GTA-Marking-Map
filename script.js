@@ -1,38 +1,47 @@
-// โหลดแผนที่ Leaflet โดยใช้รูปภาพ
+// โหลด map
 const map = L.map('map', { 
   crs: L.CRS.Simple,
   minZoom: -2,
   maxZoom: 4,
-  preferCanvas: true // ใช้ canvas renderer
+  preferCanvas: true
 });
 
 
-// โหลดภาพแผนที่ (แก้ path ตามไฟล์จริง)
-const w = 4000;
-const h = 4000;
+// กำหนดขนาดภาพ
+const w = 5329;
+const h = 3745;
 const imageUrl = 'gta5map.jpg';
 const imageBounds = [[0,0], [h,w]];
+// สร้าง audio object
+const alertSound = new Audio('Tuturu sound effect.mp3'); // หรือ URL ของไฟล์
+
 
 L.imageOverlay(imageUrl, imageBounds).addTo(map);
-map.fitBounds(imageBounds);
 
-// กำหนด icon ปกติ และ icon แดง
-const normalIcon = L.icon({
-  iconUrl: "https://cdn-icons-png.flaticon.com/512/684/684908.png",
-  iconSize: [32, 32],
-  iconAnchor: [16, 32],
-  popupAnchor: [0, -28]
+// map พอดีกับขนาดภาพ ไม่มีขอบ
+map.fitBounds(imageBounds, { padding: [0, 0] });
+map.setMaxBounds(imageBounds); // จำกัดไม่ให้เลื่อนออกนอกภาพ
+
+window.addEventListener('resize', () => {
+  map.invalidateSize();
 });
 
+// กำหนด icon
+const normalIcon = L.icon({
+  iconUrl: "https://cdn-icons-png.flaticon.com/512/684/684908.png",
+  iconSize: [32,32],
+  iconAnchor: [16,32],
+  popupAnchor: [0,-28]
+});
 const redIcon = L.icon({
   iconUrl: "https://cdn-icons-png.flaticon.com/512/684/684908.png",
-  iconSize: [32, 32],
-  iconAnchor: [16, 32],
-  popupAnchor: [0, -28],
+  iconSize: [32,32],
+  iconAnchor: [16,32],
+  popupAnchor: [0,-28],
   className: 'red-marker'
 });
 
-// CSS ให้ marker สีแดง
+// CSS marker แดง
 const style = document.createElement('style');
 style.innerHTML = `
   .leaflet-marker-icon.red-marker {
@@ -41,68 +50,129 @@ style.innerHTML = `
 `;
 document.head.appendChild(style);
 
-// ฟังก์ชันช่วยแปลงวินาทีเป็น mm:ss
+// แปลงวินาทีเป็น mm:ss
 function formatTime(totalSeconds) {
   const m = Math.floor(totalSeconds / 60);
   const s = totalSeconds % 60;
-  return `${m}:${s.toString().padStart(2, '0')}`;
+  return `${m}:${s.toString().padStart(2,'0')}`;
 }
 
-// เก็บ marker + timer
+// เก็บ markers
 let markers = [];
+let updateTimer = null;
 
-map.on('click', function(e) {
-    // สร้าง Leaflet popup เล็ก ๆ
-    const popup = L.popup()
-        .setLatLng(e.latlng)
-        .setContent(`
-            <div style="display:flex; flex-direction:column; gap:4px;">
-                <label>ตั้งเวลา (นาที):</label>
-                <input type="number" min="1" id="timeInput" style="width:60px;" />
-                <button id="startBtn">เริ่มนับถอยหลัง</button>
-            </div>
-        `)
-        .openOn(map);
+// ตำแหน่งเมาส์ล่าสุด
+let lastMouseLatLng = null;
+map.on('mousemove', e => { lastMouseLatLng = e.latlng; });
 
-    // รอให้ DOM ของ popup โหลดก่อน
-    setTimeout(() => {
-        const startBtn = document.getElementById('startBtn');
-        const timeInput = document.getElementById('timeInput');
+// Timer update รวม
+function ensureUpdateTimer() {
+  if (updateTimer) return;
+  updateTimer = setInterval(() => {
+    const now = Date.now();
+    if (markers.length === 0) {
+      clearInterval(updateTimer);
+      updateTimer = null;
+      return;
+    }
+    for (let i = markers.length-1; i>=0; i--) {
+      const entry = markers[i];
+      const remaining = Math.max(0, Math.ceil((entry.endTime - now)/1000));
+      const el = entry.tooltipEl;
+      if (!el) continue;
+      if (remaining > 0) {
+        el.textContent = `⏳ ${formatTime(remaining)}`;
+      } else if (!entry.done) {
+        entry.done = true;
+        el.textContent = "✅ หมดเวลาแล้ว!";
+        entry.marker.setIcon(redIcon);
 
-        startBtn.addEventListener('click', () => {
-            let minutes = parseInt(timeInput.value);
-            if (isNaN(minutes) || minutes <= 0) return;
+        // 🔔 เล่นเสียงแจ้งเตือน
+        alertSound.currentTime = 0;
+        alertSound.play();
+      }
+    }
+  }, 1000);
+}
 
-            let totalSeconds = minutes * 60;
 
-            // สร้าง marker + tooltip
-            const marker = L.marker(e.latlng, { icon: normalIcon }).addTo(map);
-            marker.bindTooltip(`⏳ ${formatTime(totalSeconds)}`, { permanent: true, direction: "top", offset: [0, -30] }).openTooltip();
+// ฟังก์ชันวาง marker + popup ตั้งเวลา
+function placeMarkerWithPopup(latlng) {
+  if (!latlng) return;
 
-            // countdown
-            let countdown = setInterval(() => {
-                totalSeconds--;
-                if (totalSeconds > 0) {
-                    marker.setTooltipContent(`⏳ ${formatTime(totalSeconds)}`);
-                } else {
-                    clearInterval(countdown);
-                    marker.setTooltipContent("✅ หมดเวลาแล้ว!");
-                    marker.setIcon(redIcon);
-                }
-            }, 1000);
+  const popup = L.popup()
+    .setLatLng(latlng)
+    .setContent(`
+      <div style="display:flex; flex-direction:column; gap:4px;">
+        <label>ตั้งเวลา (นาที):</label>
+        <input type="number" min="0.01" step="0.01" id="timeInput" style="width:60px;" />
+        <button id="startBtn">เริ่มนับถอยหลัง</button>
+      </div>
+    `)
+    .openOn(map);
 
-            // เก็บ marker + timer
-            markers.push({ marker, timer: countdown });
+  // ให้ DOM ของ popup โหลดก่อน
+  setTimeout(() => {
+    const startBtn = document.getElementById('startBtn');
+    const timeInput = document.getElementById('timeInput');
 
-            // คลิกขวาลบ marker
-            marker.on("contextmenu", function() {
-                clearInterval(countdown);
-                map.removeLayer(marker);
-                markers = markers.filter(m => m.marker !== marker);
-            });
+    // 🔹 focus input ทันที
+    timeInput.focus();
 
-            // ปิด popup หลังกด start
-            map.closePopup();
-        });
-    }, 50);
+    startBtn.addEventListener('click', () => {
+      let minutes = parseFloat(timeInput.value);
+      if (isNaN(minutes) || minutes <= 0) return;
+
+      const totalSeconds = Math.round(minutes * 60);
+      const endTime = Date.now() + totalSeconds * 1000;
+
+      const marker = L.marker(latlng, { icon: normalIcon }).addTo(map);
+      marker.bindTooltip(`⏳ ${formatTime(totalSeconds)}`, { permanent: true, direction:"top", offset:[0,-30] }).openTooltip();
+
+      const tooltipEl = marker.getTooltip().getElement();
+      markers.push({ marker, endTime, done:false, tooltipEl });
+      ensureUpdateTimer();
+
+      marker.on('contextmenu', () => {
+        map.removeLayer(marker);
+        markers = markers.filter(m => m.marker !== marker);
+      });
+
+      map.closePopup();
+    });
+  }, 50);
+}
+
+
+// ฟังก์ชันลบ marker ใกล้เมาส์
+function removeMarkerAtMouse(latlng, maxDistance=50) { // px
+  if (!latlng || markers.length===0) return;
+
+  let closest = null;
+  let minDist = Infinity;
+
+  markers.forEach(entry => {
+    const pos = map.latLngToContainerPoint(entry.marker.getLatLng());
+    const mousePos = map.latLngToContainerPoint(latlng);
+    const dist = pos.distanceTo(mousePos);
+    if (dist < minDist && dist <= maxDistance) {
+      minDist = dist;
+      closest = entry;
+    }
+  });
+
+  if (closest) {
+    map.removeLayer(closest.marker);
+    markers = markers.filter(m=> m!==closest);
+  }
+}
+
+// ฟังชั่น keydown
+document.addEventListener('keydown', e => {
+  if (!lastMouseLatLng) return;
+  if (e.key === 'e' || e.key==='E') {
+    placeMarkerWithPopup(lastMouseLatLng);
+  } else if (e.key === 'q' || e.key==='Q') {
+    removeMarkerAtMouse(lastMouseLatLng);
+  }
 });
