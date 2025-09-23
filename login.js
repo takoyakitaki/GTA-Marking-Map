@@ -11,7 +11,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // ตรวจสอบรหัส
     if (passwordInput.value === CORRECT_PASSWORD) {
       // ❗ ถ้ารหัสถูก ให้ไปที่หน้าหลักทันที ❗
-      window.location.href = 'index.html';
+      window.location.href = 'map.html';
     } else {
       alert('รหัสผ่านไม่ถูกต้อง!');
       passwordInput.value = '';
